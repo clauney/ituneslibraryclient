@@ -1,0 +1,15 @@
+$RECYCLE.BIN/
+*.DS_Store*
+__pycache__/
+*zzz*/
+archive/
+analysis/
+*creds*
+dev*/
+env.bak/
+env/
+logs/
+nohup.out
+venv.bak/
+venv/
+_itl.p
