@@ -8,19 +8,72 @@ sys.path.append('~/code/shared/libpytunes/'.replace('~', home_dir))
 from six.moves.urllib import parse as urlparse #parse 'file://' encoded paths
 from libpytunes import Library
 #from libpytunes import Song             # later :D
-itunes_library_path = '~/Music/iTunes/iTunes Music Library.xml'.replace('~', home_dir)
-library_cache_ttl = 60 * 10  # (sec) Refresh pickled file if older than this (seconds)
 
+#%%
+# itunes_library_path = '~/Music/iTunes/backup_iTunes_libraries/backup 20180703 - iTunes Music Library.xml'.replace('~', home_dir)
+# itunes_library_path = '~/Music/iTunes/backup_iTunes_libraries/backup-2020-03-10.xml'.replace('~', home_dir)
+itunes_library_path = '~/Music/iTunes/backup_iTunes_libraries/backup-2021-10-23-Library.xml'.replace('~', home_dir)
+
+
+
+library_cache_ttl = 60 * 10  # (sec) Refresh pickled file if older than this (seconds)
+filesys_audit_ignore = {
+    'name': ['.DS_Store'],
+    'extension': ['.plist', # the itunes prefs in iTunes/iTunes Music/.iTunes Preferences.plist
+                  '.ini', # desktop.ini if you ever had windows looking at stuff
+                  '.pdf', # digital booklet that comes with some albums (really just the free U2 one)
+                  '.strings', # localization files in 'iTunes Music/Automatically Add to TV.localized/'
+                  '.jpg',  # some album art stuff, maybe from legacy but itunes has yet to convert?
+                  '.m4r', # ringtones in 'iTunes/iTunes Music/Tones/'
+                  
+                  ],
+    }
 filter_config = {
-        'non_music': {'kind': ('Internet audio stream', 'MPEG-4 audio stream', None,
-                               'MPEG-4 video file', 'QuickTime movie url', 'MPEG audio stream')},
-        'purchased_music': {'kind': ('AAC audio file', 'Purchased AAC audio file', 'Protected AAC audio file')},
-        'mp3': {'kind': ('MPEG audio file')},
-        'video': {'kind': ('MPEG audio file')},
-        'local': {'track_type': ('File')},
-        'non_local': {'track_type': ('URL')},
-        'ignore_mp3_ver_audit': {'genre': ('Voice Memo', 'Podcast')},
-        }
+    'non_music': {
+        'kind': (
+            'Internet audio stream',
+            'MPEG-4 audio stream',
+            None,
+            'MPEG-4 video file', # .m4v
+            'MPEG video file', # .m4v
+            'QuickTime movie url',
+            'MPEG audio stream',
+        ),
+    },
+    'purchased_music': {
+        'kind': (
+            'AAC audio file', # audio memos, etc.
+            'Purchased AAC audio file', # .m4a
+            'Protected AAC audio file', # .m4p
+        ),
+    },
+    'mp3': {
+        'kind': (
+            'MPEG audio file', # .mp3, .Mp3, .MP3, etc.
+        ),
+    },
+    'video': {
+        'kind': (
+            'MPEG video file', # .m4v
+        ),
+    },
+    'local': {
+        'track_type': (
+            'File',
+        ),
+    },
+    'non_local': {
+        'track_type': (
+            'URL',
+        ),
+    },
+    'ignore_mp3_ver_audit': {
+        'genre': (
+            'Voice Memo',
+            'Podcast',
+        ),
+    },
+}
 
 # INTERNAL APP SETTINGS
 
@@ -39,7 +92,8 @@ filter_config = {
 
 
 non_music_key = 'kind'
-non_music_values = (None, 'Internet audio stream', 'MPEG audio stream', 'MPEG-4 audio stream', 'MPEG-4 video file', 'QuickTime movie url')
+# non_music_values = (None, 'Internet audio stream', 'MPEG audio stream', 'MPEG-4 audio stream', 'MPEG-4 video file', 'QuickTime movie url')
+non_music_values = [s for s in filter_config.get('non_music', {}).get('kind', [])]
 
 purchased_music_key = 'kind'
 purchased_music_values = ('AAC audio file', 'Purchased AAC audio file', 'Protected AAC audio file')
@@ -48,7 +102,7 @@ non_local_items_key = 'track_type'
 non_local_items_values = ('URL')
 
 mp3_version_audit_ignore_types = ('Voice Memo', 'Podcast')
-
+#%%
 class ThePickler():
     def save_to_file(filename, data):
         '''(str, obj)->None
@@ -74,21 +128,44 @@ class myTunes():
                          'play_some_skynyrd': {'artist': ('Lynyrd Skynyrd')}}
                 
         '''
+        self.lib = None
         self.lib_path = itunes_lib_path
         self._pf = '_itl.p'
         self._pf_exp = kwargs.get('library_cache_ttl', 600)
         self.filters = kwargs.get('filters', {})
         self._refresh_lib()
+
+    def _delete_lib_file(self):
+        os.remove(self._pf)
+
+    def _dump_library_to_pf(self):
+        if os.path.isfile(self._pf):
+            self._delete_lib_file()
+        itl_source = Library(self.lib_path)
+        with open(self._pf, "xb") as whand:
+            pickle.dump(itl_source, whand)
+
+    def _load_lib_from_pf(self):
+        with open(self._pf, "rb") as rhand:
+            self.lib = pickle.load(rhand)
+
     def _refresh_lib(self):
         if not os.path.isfile(self._pf) or os.path.getmtime(self._pf) + self._pf_exp < int(time.time()):
-            itl_source = Library(self.lib_path)
-            pickle.dump(itl_source, open(self._pf, "wb"))
-        self.lib = pickle.load(open(self._pf, "rb"))
+            self._dump_library_to_pf()
+            # itl_source = Library(self.lib_path)
+            # with open(self._pf, "wb") as whand:
+                # pickle.dump(itl_source, whand)
+            self.lib = None
+        if not self.lib:
+            self._load_lib_from_pf()
+        # with open(self._pf, "rb") as rhand:
+            # self.lib = pickle.load(rhand)
         self.songs_by_type = {}
         self.song_type_report={}
         self.songs_by_type, self.song_type_report = self._group_songs(self.lib.songs.values(), 'kind')
         #self.itunes_base_dir = self.lib.il.get('Music Folder', '').replace('file:///', '').replace('%20', ' ')
         self.itunes_base_dir = urlparse.unquote(urlparse.urlparse(self.lib.il.get('Music Folder')).path[1:])
+
     def _group_songs(self, song_list, group_key):
         returndict={}
         for sv in song_list:
@@ -100,16 +177,19 @@ class myTunes():
         for k in returndict.keys():
             returnreport[k]=len(returndict[k])
         return returndict,returnreport
+
     @property
     def num_songs(self):
         return len(self.lib.songs)
+
     @property
     def playlists(self):
         return self.lib.getPlaylistNames()
-    def diff_playlists(self, plist1_name, plist2_name):
+
+    def diff_playlists(self, plist1_name, plist2_name, inverse=False):
         '''(str, str)->dict
-        Returns a dict containing 2 k:v pairs, each containing a list of songs in
-        that playlist that do not appear in the other playlist
+        Returns a dict containing 3 k:v pairs, one for each playlist showing 
+        the songs not in the other, and one showing songs in both.
         >>>diff_playlists('70s 1', '70s')
         {'only_in_{}'.format(plist1_name)}
         '''
@@ -117,10 +197,13 @@ class myTunes():
         p2 = self.lib.getPlaylist(plist2_name).tracks        
         return {'only_in_{}'.format(plist1_name): [d.name for d in p1 if d not in p2],
                 'only_in_{}'.format(plist2_name): [d.name for d in p2 if d not in p1],
+                'in_both_playlists': [d.name for d in p1 if d in p2],
                 }
+
     def tattle_songs_with_bad_info(self):
         self._refresh_lib()
         pass
+
     def search_songs_multi_params(self, **kwargs):
         '''(kwargs)->list
         Search songs by song parameters expressed as kwargs.
@@ -138,6 +221,7 @@ class myTunes():
 #            print(returndict)
 #        return returndict
         return self._songlib_to_dict(returndict), len(returndict)
+
     def search_songs_multi_params_alt(self, **kwargs): #works as well as the above, will test for scale to see which performs better. Probably the above wins.
         self._refresh_lib()
         returndict=self.lib.songs.copy()
@@ -156,6 +240,7 @@ class myTunes():
         If skiplist is provided, those keys will NOT be removed from the return dict
         '''
         return {k:v for k,v in sparsedict.items() if v or k in skiplist}
+
     def _songlib_to_dict(self, songdict):
         '''(dict)->dict
         Returns a dict representation of the songlib, with all 'None' strings removed.
@@ -165,12 +250,16 @@ class myTunes():
             if type(obj) != dict: obj = obj.ToDict()
             returndict[num] = self._remove_none_from_dict(obj)
         return returndict
+
     def search_songs_by_logic_expr(self, search_key, search_value, search_type, inverse=False):
         '''(str,str,str(in|equal),[bool])->list,int
         Returns a tuple of (matchlist, # of matches) for songs whose value for the field specified
         by search_key matches the search_value parameter based on logic specified in search_type:
             'in' - search_value is in song.dict[search_key] (not in for inverse=True)
             'is' - search_value equals song.dict[search_key] (not equal for inverse=True)
+        
+        # FIND LOCAL SONGS
+        >>>deej.search_songs_by_logic_expr('location', "Users", 'in')
 
         >>>deej.search_songs_by_logic_expr('artist','52','in')
 
@@ -210,22 +299,38 @@ class myTunes():
                     (str(search_value)).lower() == d.get(search_key, 'None').lower()
                     ) != inverse]
         return returnlist, len(returnlist)
+
     def audit_songs_noband(self, music_only=True):
         self._refresh_lib()
         returndict = {k:v.ToDict() for k, v in self.lib.songs.items() if v.artist==None and 
                 ((not music_only) or (not v.podcast and not v.movie))}
         return self._songlib_to_dict(returndict), len(returndict)
+
     @property
     def songs(self):
         self._refresh_lib()
         return [self._remove_none_from_dict(v.ToDict()) for k, v in self.lib.songs.items()]
+
     @property
     def songs_music(self):
         self._refresh_lib()
-        return [self._remove_none_from_dict(v.ToDict()) for k, v in self.lib.songs.items() if 
-                v.ToDict().get(non_music_key) not in non_music_values and
-                v.ToDict().get(non_local_items_key) not in non_local_items_values
+        return [v for v in self.songs if 
+                v.get(non_music_key) not in non_music_values and
+                v.get(non_local_items_key) not in non_local_items_values
                 ]
+
+    @property
+    def songs_local(self):
+        self._refresh_lib()
+        return [v for v in self.songs if 
+                v.get(non_local_items_key) not in non_local_items_values
+                ]
+
+    @property
+    def filesystem_paths_to_songs(self):
+        self._refresh_lib()
+        return {'/{}'.format(d.get('location')): d for d in self.songs_local}
+
     @property
     def itunes_path(self):
         '''()->str
@@ -234,37 +339,45 @@ class myTunes():
         'Users/heatherkrause/Music/iTunes'
         '''
         return self.lib_path[1:self.lib_path.rfind('/')]
-    def audit_songs_not_in_itunes_path(self, exclude_url = True):
+
+    def audit_songs_not_in_itunes_path(self, exclude_url = True):        
         self._refresh_lib()
-        not_in = self.search_songs_by_logic_expr('location', self.itunes_path, 'in', True)[0]
+        not_in = self.search_songs_by_logic_expr('location', self.itunes_base_dir, 'in', True)[0]
         returndict = not_in if not exclude_url else [d for d in not_in if (d[non_local_items_key] not in non_local_items_values)]
         return returndict, len(returndict)
+
     def audit_songs_noname(self):
         self._refresh_lib()
         returndict = {k:v.ToDict() for k, v in self.lib.songs.items() if v.name == None}
         return self._songlib_to_dict(returndict), len(returndict)
+
     def audit_songs_album_artist_different(self, music_only=True):
         self._refresh_lib()
         returndict = {k:v.ToDict() for k, v in self.lib.songs.items() if v.album_artist and v.artist != v.album_artist and 
                 ((not music_only) or (not v.podcast and not v.movie))
                 }
         return self._songlib_to_dict(returndict), len(returndict)
+
     def get(self, song_num, include_empty_fields=False):
         self._refresh_lib()
         returndict = self.lib.songs[song_num].ToDict()
         if not include_empty_fields:
             returndict = self._remove_none_from_dict(returndict)
         return returndict
+
     def print_song_basic_info(self,song):
         print('name:', song.name, 'album:', song.album, 'trackid:', song.track_id, 
               'artist:', song.artist, 'genre:', song.genre)
+
     @property
     def purchased_songs(self):
         return [*self.songs_by_type.get('AAC audio file', []),
                 *self.songs_by_type.get('Purchased AAC audio file', []),
                 *self.songs_by_type.get('Protected AAC audio file', [])]
+
     def audit_purchased_need_mp3(self):
         return self.audit_mp3_missing(self.purchased_songs)
+    
     def audit_mp3_missing(self, songs_to_audit): #!!!!this ended up stupid. look @ how to break up / modularize audit_mp3_missing and audit_wav_need_mp3
         need_mp3_version = []
         have_mp3_version = []
@@ -286,8 +399,31 @@ class myTunes():
         print('\n{} songs with mp3 version'.format(len(have_mp3_version)))
         print('\n{} songs WITHOUT mp3 version. Songs: {}'.format(len(need_mp3_version), {d.track_id:d.name for d in need_mp3_version}))
         return have_mp3_version, need_mp3_version
+
     def audit_wav_need_mp3(self): #!!!!this ended up stupid. look @ how to break up / modularize audit_mp3_missing and audit_wav_need_mp3
         return self.audit_mp3_missing(self.songs_by_type.get('WAV audio file'))
+
+    def audit_songs_not_in_filesystem(self):
+        self._refresh_lib()
+        rl = []
+        # loc_songs = [d for d in self.songs if d[non_local_items_key] not in non_local_items_values]
+        for s in self.songs_local:
+            if not os.path.isfile('/{}'.format(s.get('location', ''))):
+                rl.append(s)
+        return rl, len(rl)
+
+    def audit_files_in_music_dir_not_in_library(self):
+        self._refresh_lib()
+        fastcheck = list(self.filesystem_paths_to_songs.keys())
+        os_files = [os.path.join(dp, f)
+                    for dp, dn, filenames in os.walk('/{}'.format(self.itunes_base_dir))
+                    for f in filenames
+                    if f not in filesys_audit_ignore.get('name', [])
+                    and os.path.splitext(f)[1] not in filesys_audit_ignore.get('extension', [])
+                    ]
+        rl = [s for s in os_files if s not in fastcheck]
+        return rl, len(rl)
+
     def audit_dupes(self, logic='artist_album_name'):
         '''
         >>>audit_dupes() # equiv to audit_dupes('artist_album_name')
@@ -358,6 +494,8 @@ class myTunes():
 #        return (have_mp3_version,need_mp3_version)
 
 #%%
+# sys.exit()
+
 deej = myTunes(itunes_library_path, library_cache_ttl=600, filters=filter_config)
 have, need = deej.audit_purchased_need_mp3()
 print(deej.song_type_report)
